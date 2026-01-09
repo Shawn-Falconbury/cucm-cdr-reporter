@@ -1,0 +1,12 @@
+# CUCM CDR Failed Call Reporter Dependencies
+# Install with: pip install -r requirements.txt
+
+# SFTP connectivity to CUCM
+paramiko>=3.4.0
+
+# PDF report generation
+reportlab>=4.0.0
+
+# Optional but recommended for enhanced functionality
+# pandas>=2.0.0        # For advanced data analysis (uncomment if needed)
+# matplotlib>=3.7.0    # For chart generation (uncomment if needed)
