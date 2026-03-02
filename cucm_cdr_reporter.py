@@ -5,7 +5,7 @@ CUCM CDR Failed Call Reporter
 Pulls CDR data from Cisco Unified Communications Manager via SFTP,
 analyzes failed calls, and generates PDF/email reports.
 
-Version: 1.1.0
+Version: 1.2.0
 License: MIT
 """
 
@@ -1161,6 +1161,50 @@ class CDRReporter:
         
         return total_records, total_failed
     
+    def process_local_cdr_files(self) -> Tuple[int, int]:
+        """Process CDR files from local directory (no SFTP)"""
+        total_records = 0
+        total_failed = 0
+        
+        local_dir = Path(self.config.local_cdr_dir)
+        
+        if not local_dir.exists():
+            logger.warning(f"Local CDR directory does not exist: {local_dir}")
+            return 0, 0
+        
+        # Find all CDR files in local directory
+        cdr_files = sorted(local_dir.glob('cdr_*'))
+        
+        if not cdr_files:
+            logger.warning(f"No CDR files found in {local_dir}")
+            return 0, 0
+        
+        logger.info(f"Found {len(cdr_files)} CDR files in {local_dir}")
+        
+        for file_path in cdr_files:
+            file_hash = self.parser.get_file_hash(str(file_path))
+            filename = file_path.name
+            
+            if self.db.is_file_processed(filename, file_hash):
+                logger.debug(f"Skipping already processed file: {filename}")
+                continue
+            
+            records, row_count = self.parser.parse_file(str(file_path))
+            total_records += len(records)
+            
+            failed_count = 0
+            for record in records:
+                if record.is_failed:
+                    self.db.insert_failed_call(record, file_hash)
+                    failed_count += 1
+            
+            total_failed += failed_count
+            
+            self.db.mark_file_processed(filename, file_hash, len(records), failed_count)
+            logger.info(f"Processed {filename}: {len(records)} records, {failed_count} failed calls")
+        
+        return total_records, total_failed
+    
     def generate_and_send_report(self) -> bool:
         """Generate report and send via email"""
         
@@ -1193,17 +1237,26 @@ class CDRReporter:
                     report_file.unlink()
                     logger.debug(f"Deleted old report: {report_file}")
     
-    def run(self, skip_fetch: bool = False):
+    def run(self, skip_fetch: bool = False, process_local: bool = False):
         """Run the complete reporting workflow"""
         logger.info("=" * 60)
         logger.info("Starting CUCM CDR Failed Call Reporter")
         logger.info("=" * 60)
         
         try:
-            if not skip_fetch:
+            if process_local:
+                # Process local files only (for testing or manual file drops)
+                logger.info("Processing local CDR files...")
+                total_records, total_failed = self.process_local_cdr_files()
+                logger.info(f"Processed {total_records} records, found {total_failed} new failed calls")
+            elif not skip_fetch:
+                # Normal mode: fetch from CUCM and process
                 logger.info("Fetching CDR files from CUCM...")
                 total_records, total_failed = self.fetch_and_process_cdr_files()
                 logger.info(f"Processed {total_records} records, found {total_failed} new failed calls")
+            else:
+                # Skip fetch: just generate report from existing database
+                logger.info("Skipping CDR fetch, using existing database...")
             
             logger.info("Generating report...")
             self.generate_and_send_report()
@@ -1261,16 +1314,24 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  Generate sample config:  python cucm_cdr_reporter.py --init
-  Run with config file:    python cucm_cdr_reporter.py -c config.json
-  Skip SFTP fetch:         python cucm_cdr_reporter.py -c config.json --skip-fetch
-  Verbose output:          python cucm_cdr_reporter.py -c config.json -v
+  Generate sample config:    python cucm_cdr_reporter.py --init
+  Run with config file:      python cucm_cdr_reporter.py -c config.json
+  Process local test files:  python cucm_cdr_reporter.py -c config.json --process-local
+  Report from existing DB:   python cucm_cdr_reporter.py -c config.json --skip-fetch
+  Verbose output:            python cucm_cdr_reporter.py -c config.json -v
+
+Testing workflow:
+  1. python generate_test_data.py --hours 48 --calls 100 --failure-rate 0.25
+  2. python cucm_cdr_reporter.py -c config.json --process-local
         """
     )
     
     parser.add_argument('-c', '--config', help='Path to configuration file')
     parser.add_argument('--init', action='store_true', help='Create sample configuration file')
-    parser.add_argument('--skip-fetch', action='store_true', help='Skip SFTP fetch, use existing data')
+    parser.add_argument('--skip-fetch', action='store_true', 
+                       help='Skip CDR processing, generate report from existing database only')
+    parser.add_argument('--process-local', action='store_true',
+                       help='Process CDR files from local directory (no CUCM connection)')
     parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose logging')
     
     args = parser.parse_args()
@@ -1293,7 +1354,7 @@ Examples:
     
     config = Config.from_file(args.config)
     reporter = CDRReporter(config)
-    reporter.run(skip_fetch=args.skip_fetch)
+    reporter.run(skip_fetch=args.skip_fetch, process_local=args.process_local)
 
 
 if __name__ == '__main__':
