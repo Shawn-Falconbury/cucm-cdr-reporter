@@ -5,7 +5,7 @@ CUCM CDR Failed Call Reporter
 Pulls CDR data from Cisco Unified Communications Manager via SFTP,
 analyzes failed calls, and generates PDF/email reports.
 
-Version: 1.0.0
+Version: 1.1.0
 License: MIT
 """
 
@@ -37,6 +37,28 @@ from reportlab.platypus import (
     PageBreak, Image
 )
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+
+# =============================================================================
+# Python 3.12+ SQLite datetime adapter fix
+# =============================================================================
+def _adapt_datetime(dt):
+    """Convert datetime to ISO format string for SQLite storage"""
+    return dt.isoformat() if dt else None
+
+def _convert_datetime(s):
+    """Convert ISO format string back to datetime"""
+    if s is None:
+        return None
+    if isinstance(s, bytes):
+        s = s.decode('utf-8')
+    try:
+        return datetime.fromisoformat(s)
+    except (ValueError, TypeError):
+        return None
+
+# Register the adapters globally
+sqlite3.register_adapter(datetime, _adapt_datetime)
+sqlite3.register_converter("TIMESTAMP", _convert_datetime)
 
 # Configure logging
 logging.basicConfig(
@@ -264,7 +286,11 @@ class CDRDatabase:
     
     def _init_database(self):
         """Initialize database and create tables"""
-        self.conn = sqlite3.connect(self.db_path)
+        # Use detect_types to enable custom datetime conversion
+        self.conn = sqlite3.connect(
+            self.db_path,
+            detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES
+        )
         self.conn.row_factory = sqlite3.Row
         
         cursor = self.conn.cursor()
@@ -313,6 +339,10 @@ class CDRDatabase:
         
         self.conn.commit()
     
+    def _format_datetime_for_query(self, dt: datetime) -> str:
+        """Format datetime as ISO string for SQL queries"""
+        return dt.isoformat() if dt else None
+    
     def is_file_processed(self, filename: str, file_hash: str) -> bool:
         """Check if a file has already been processed"""
         cursor = self.conn.cursor()
@@ -330,7 +360,8 @@ class CDRDatabase:
             INSERT OR REPLACE INTO processed_files 
             (filename, file_hash, records_processed, failed_calls_found, processed_at)
             VALUES (?, ?, ?, ?, ?)
-        ''', (filename, file_hash, records_processed, failed_calls_found, datetime.now()))
+        ''', (filename, file_hash, records_processed, failed_calls_found, 
+              self._format_datetime_for_query(datetime.now())))
         self.conn.commit()
     
     def insert_failed_call(self, record: CDRRecord, file_hash: str):
@@ -347,7 +378,7 @@ class CDRDatabase:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 record.global_call_id,
-                record.date_time_origination,
+                self._format_datetime_for_query(record.date_time_origination),
                 record.calling_party_number,
                 record.original_called_party_number,
                 record.final_called_party_number,
@@ -374,7 +405,7 @@ class CDRDatabase:
             SELECT * FROM failed_calls 
             WHERE date_time_origination >= ?
             ORDER BY date_time_origination DESC
-        ''', (cutoff,))
+        ''', (self._format_datetime_for_query(cutoff),))
         
         return [dict(row) for row in cursor.fetchall()]
     
@@ -382,11 +413,12 @@ class CDRDatabase:
         """Get aggregated failure statistics"""
         cursor = self.conn.cursor()
         cutoff = datetime.now() - timedelta(hours=hours)
+        cutoff_str = self._format_datetime_for_query(cutoff)
         
         cursor.execute('''
             SELECT COUNT(*) as total FROM failed_calls 
             WHERE date_time_origination >= ?
-        ''', (cutoff,))
+        ''', (cutoff_str,))
         total = cursor.fetchone()['total']
         
         cursor.execute('''
@@ -395,7 +427,7 @@ class CDRDatabase:
             WHERE date_time_origination >= ?
             GROUP BY dest_cause_value 
             ORDER BY count DESC
-        ''', (cutoff,))
+        ''', (cutoff_str,))
         by_cause = [dict(row) for row in cursor.fetchall()]
         
         cursor.execute('''
@@ -405,7 +437,7 @@ class CDRDatabase:
             WHERE date_time_origination >= ?
             GROUP BY hour 
             ORDER BY hour
-        ''', (cutoff,))
+        ''', (cutoff_str,))
         by_hour = [dict(row) for row in cursor.fetchall()]
         
         cursor.execute('''
@@ -415,7 +447,7 @@ class CDRDatabase:
             GROUP BY calling_party_number 
             ORDER BY count DESC 
             LIMIT 10
-        ''', (cutoff,))
+        ''', (cutoff_str,))
         top_callers = [dict(row) for row in cursor.fetchall()]
         
         cursor.execute('''
@@ -425,7 +457,7 @@ class CDRDatabase:
             GROUP BY original_called_party_number 
             ORDER BY count DESC 
             LIMIT 10
-        ''', (cutoff,))
+        ''', (cutoff_str,))
         top_destinations = [dict(row) for row in cursor.fetchall()]
         
         cursor.execute('''
@@ -435,7 +467,7 @@ class CDRDatabase:
             GROUP BY orig_device_name 
             ORDER BY count DESC 
             LIMIT 10
-        ''', (cutoff,))
+        ''', (cutoff_str,))
         top_devices = [dict(row) for row in cursor.fetchall()]
         
         return {
@@ -456,7 +488,7 @@ class CDRDatabase:
         
         cursor.execute('''
             DELETE FROM failed_calls WHERE date_time_origination < ?
-        ''', (cutoff,))
+        ''', (self._format_datetime_for_query(cutoff),))
         
         deleted = cursor.rowcount
         self.conn.commit()
