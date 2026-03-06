@@ -5,7 +5,7 @@ CUCM CDR Failed Call Reporter
 Pulls CDR data from Cisco Unified Communications Manager via SFTP,
 analyzes failed calls, and generates PDF/email reports.
 
-Version: 1.2.0
+Version: 1.2.1
 License: MIT
 """
 
@@ -747,12 +747,12 @@ class CDRParser:
         return records, total_rows
     
     def get_file_hash(self, file_path: str) -> str:
-        """Calculate MD5 hash of file for duplicate detection"""
-        hash_md5 = hashlib.md5()
+        """Calculate SHA256 hash of file for duplicate detection (FIPS compliant)"""
+        file_hash = hashlib.sha256()
         with open(file_path, "rb") as f:
             for chunk in iter(lambda: f.read(4096), b""):
-                hash_md5.update(chunk)
-        return hash_md5.hexdigest()
+                file_hash.update(chunk)
+        return file_hash.hexdigest()
 
 
 # =============================================================================
@@ -914,7 +914,8 @@ class ReportGenerator:
         story.append(Spacer(1, 10))
         
         if failed_calls:
-            detail_data = [['Time', 'From', 'To', 'Cause', 'Device']]
+            # Header row with Origin IP column
+            detail_data = [['Time', 'From', 'To', 'Cause', 'Device', 'Origin IP']]
             
             for call in failed_calls[:50]:
                 dt = call.get('date_time_origination', '')
@@ -925,13 +926,15 @@ class ReportGenerator:
                 
                 detail_data.append([
                     dt_str,
-                    (call.get('calling_party_number', '') or 'Unknown')[:15],
-                    (call.get('original_called_party_number', '') or 'Unknown')[:15],
+                    (call.get('calling_party_number', '') or 'Unknown')[:12],
+                    (call.get('original_called_party_number', '') or 'Unknown')[:12],
                     str(call.get('dest_cause_value', 0)),
-                    (call.get('orig_device_name', '') or 'Unknown')[:20]
+                    (call.get('orig_device_name', '') or 'Unknown')[:18],
+                    (call.get('orig_ip_addr', '') or '')[:15]
                 ])
             
-            detail_table = Table(detail_data, colWidths=[1.1*inch, 1.2*inch, 1.2*inch, 0.6*inch, 2.4*inch])
+            # Adjusted column widths to fit Origin IP (total ~7.5 inches for letter size with margins)
+            detail_table = Table(detail_data, colWidths=[0.9*inch, 1.0*inch, 1.0*inch, 0.5*inch, 1.9*inch, 1.2*inch])
             detail_table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2c3e50')),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
