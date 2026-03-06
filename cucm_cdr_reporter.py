@@ -5,7 +5,7 @@ CUCM CDR Failed Call Reporter
 Pulls CDR data from Cisco Unified Communications Manager via SFTP,
 analyzes failed calls, and generates PDF/email reports.
 
-Version: 1.2.1
+Version: 1.2.2
 License: MIT
 """
 
@@ -669,6 +669,24 @@ class CDRParser:
         except (ValueError, TypeError):
             return default
     
+    def _int_to_ip(self, ip_int_str: str) -> str:
+        """Convert integer IP address to dotted-decimal notation.
+        
+        CUCM stores IP addresses as 32-bit unsigned integers in little-endian
+        byte order in CDR files. For example: 174657708 -> 172.16.105.10
+        """
+        if not ip_int_str:
+            return ""
+        try:
+            ip_int = int(ip_int_str)
+            if ip_int == 0:
+                return ""
+            # Convert 32-bit integer to dotted-decimal (little-endian byte order)
+            return f"{ip_int & 0xFF}.{(ip_int >> 8) & 0xFF}.{(ip_int >> 16) & 0xFF}.{(ip_int >> 24) & 0xFF}"
+        except (ValueError, TypeError):
+            # If it's already a valid IP string or conversion fails, return as-is
+            return str(ip_int_str) if ip_int_str else ""
+    
     def _parse_timestamp(self, epoch_str: str) -> Optional[datetime]:
         """Convert epoch timestamp to datetime"""
         try:
@@ -725,8 +743,8 @@ class CDRParser:
                             duration=self._get_field_int(row, 'duration'),
                             orig_device_name=self._get_field(row, 'origDeviceName'),
                             dest_device_name=self._get_field(row, 'destDeviceName'),
-                            orig_ip_addr=self._get_field(row, 'origIpAddr'),
-                            dest_ip_addr=self._get_field(row, 'destIpAddr'),
+                            orig_ip_addr=self._int_to_ip(self._get_field(row, 'origIpAddr')),
+                            dest_ip_addr=self._int_to_ip(self._get_field(row, 'destIpAddr')),
                             calling_party_number_partition=self._get_field(row, 'callingPartyNumberPartition'),
                             original_called_party_number_partition=self._get_field(row, 'originalCalledPartyNumberPartition'),
                             final_called_party_number_partition=self._get_field(row, 'finalCalledPartyNumberPartition'),
