@@ -272,8 +272,8 @@ A call is classified as **failed** when:
 CUCM stores IP addresses as 32-bit integers in little-endian byte order. The script automatically converts these to standard dotted-decimal notation:
 
 ```
-CDR Value: 174657708
-Converted: 172.16.105.10
+CDR Value: 3232235876
+Converted: 192.168.1.100
 ```
 
 ---
