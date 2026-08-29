@@ -673,7 +673,7 @@ class CDRParser:
         """Convert integer IP address to dotted-decimal notation.
         
         CUCM stores IP addresses as 32-bit unsigned integers in little-endian
-        byte order in CDR files. For example: 174657708 -> 172.16.105.10
+        byte order in CDR files. For example: 1677830336 -> 192.168.1.100
         """
         if not ip_int_str:
             return ""
